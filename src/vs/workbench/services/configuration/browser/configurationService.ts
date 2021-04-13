@@ -16,7 +16,7 @@ import { IConfigurationChangeEvent, ConfigurationTarget, IConfigurationOverrides
 import { Configuration } from 'vs/workbench/services/configuration/common/configurationModels';
 import { FOLDER_CONFIG_FOLDER_NAME, defaultSettingsSchemaId, userSettingsSchemaId, workspaceSettingsSchemaId, folderSettingsSchemaId, IConfigurationCache, machineSettingsSchemaId, LOCAL_MACHINE_SCOPES, IWorkbenchConfigurationService, UntrustedSettings } from 'vs/workbench/services/configuration/common/configuration';
 import { Registry } from 'vs/platform/registry/common/platform';
-import { IConfigurationRegistry, Extensions, allSettings, windowSettings, resourceSettings, applicationSettings, machineSettings, machineOverridableSettings, ConfigurationScope } from 'vs/platform/configuration/common/configurationRegistry';
+import { IConfigurationRegistry, Extensions, allSettings, windowSettings, resourceSettings, applicationSettings, machineSettings, machineOverridableSettings, ConfigurationScope, IConfigurationPropertySchema } from 'vs/platform/configuration/common/configurationRegistry';
 import { IWorkspaceIdentifier, isWorkspaceIdentifier, IStoredWorkspaceFolder, isStoredWorkspaceFolder, IWorkspaceFolderCreationData, IWorkspaceInitializationPayload, IEmptyWorkspaceIdentifier, useSlashForPath, getStoredWorkspaceFolder, isSingleFolderWorkspaceIdentifier, ISingleFolderWorkspaceIdentifier, toWorkspaceFolders } from 'vs/platform/workspaces/common/workspaces';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { ConfigurationEditingService, EditableConfigurationTarget } from 'vs/workbench/services/configuration/common/configurationEditingService';
@@ -32,8 +32,9 @@ import { LifecyclePhase } from 'vs/workbench/services/lifecycle/common/lifecycle
 import { ILogService } from 'vs/platform/log/common/log';
 import { toErrorMessage } from 'vs/base/common/errorMessage';
 import { IUriIdentityService } from 'vs/workbench/services/uriIdentity/common/uriIdentity';
-import { IWorkspaceTrustManagementService, WorkspaceTrustState } from 'vs/platform/workspace/common/workspaceTrust';
+import { IWorkspaceTrustManagementService } from 'vs/platform/workspace/common/workspaceTrust';
 import { delta, distinct } from 'vs/base/common/arrays';
+import { forEach, IStringDictionary } from 'vs/base/common/collections';
 
 class Workspace extends BaseWorkspace {
 	initialized: boolean = false;
@@ -75,7 +76,7 @@ export class WorkspaceService extends Disposable implements IWorkbenchConfigurat
 	private readonly _onDidChangeUntrustedSettings = this._register(new Emitter<UntrustedSettings>());
 	public readonly onDidChangeUntrustdSettings = this._onDidChangeUntrustedSettings.event;
 
-	private workspaceTrustState: WorkspaceTrustState = WorkspaceTrustState.Trusted;
+	private isWorkspaceTrusted: boolean = true;
 	private _unTrustedSettings: UntrustedSettings = {};
 	get unTrustedSettings() { return this._unTrustedSettings; }
 
@@ -398,16 +399,16 @@ export class WorkspaceService extends Disposable implements IWorkbenchConfigurat
 		mark('code/didInitWorkspaceService');
 	}
 
-	updateWorkspaceTrustState(workspaceTrustState: WorkspaceTrustState): void {
-		if (this.workspaceTrustState !== workspaceTrustState) {
-			this.workspaceTrustState = workspaceTrustState;
+	updateWorkspaceTrust(trusted: boolean): void {
+		if (this.isWorkspaceTrusted !== trusted) {
+			this.isWorkspaceTrusted = trusted;
 			const data = this._configuration.toData();
 			const folderConfigurationModels: (ConfigurationModel | undefined)[] = [];
 			for (const folder of this.workspace.folders) {
 				const folderConfiguration = this.cachedFolderConfigs.get(folder.uri);
 				let configurationModel: ConfigurationModel | undefined;
 				if (folderConfiguration) {
-					configurationModel = folderConfiguration.updateWorkspaceTrustState(this.workspaceTrustState);
+					configurationModel = folderConfiguration.updateWorkspaceTrust(this.isWorkspaceTrusted);
 					this._configuration.updateFolderConfiguration(folder.uri, configurationModel);
 				}
 				folderConfigurationModels.push(configurationModel);
@@ -417,7 +418,7 @@ export class WorkspaceService extends Disposable implements IWorkbenchConfigurat
 					this._configuration.updateWorkspaceConfiguration(folderConfigurationModels[0]);
 				}
 			} else {
-				this._configuration.updateWorkspaceConfiguration(this.workspaceConfiguration.updateWorkspaceTrustState(this.workspaceTrustState));
+				this._configuration.updateWorkspaceConfiguration(this.workspaceConfiguration.updateWorkspaceTrust(this.isWorkspaceTrusted));
 			}
 			const keys = this.updateUntrustedSettings();
 			if (keys.length) {
@@ -450,7 +451,7 @@ export class WorkspaceService extends Disposable implements IWorkbenchConfigurat
 	}
 
 	private async createMultiFolderWorkspace(workspaceIdentifier: IWorkspaceIdentifier): Promise<Workspace> {
-		await this.workspaceConfiguration.initialize({ id: workspaceIdentifier.id, configPath: workspaceIdentifier.configPath }, this.workspaceTrustState);
+		await this.workspaceConfiguration.initialize({ id: workspaceIdentifier.id, configPath: workspaceIdentifier.configPath }, this.isWorkspaceTrusted);
 		const workspaceConfigPath = workspaceIdentifier.configPath;
 		const workspaceFolders = toWorkspaceFolders(this.workspaceConfiguration.getFolders(), workspaceConfigPath, this.uriIdentityService.extUri);
 		const workspaceId = workspaceIdentifier.id;
@@ -787,7 +788,7 @@ export class WorkspaceService extends Disposable implements IWorkbenchConfigurat
 		return Promise.all([...folders.map(folder => {
 			let folderConfiguration = this.cachedFolderConfigs.get(folder.uri);
 			if (!folderConfiguration) {
-				folderConfiguration = new FolderConfiguration(folder, FOLDER_CONFIG_FOLDER_NAME, this.getWorkbenchState(), this.workspaceTrustState, this.fileService, this.uriIdentityService, this.logService, this.configurationCache);
+				folderConfiguration = new FolderConfiguration(folder, FOLDER_CONFIG_FOLDER_NAME, this.getWorkbenchState(), this.isWorkspaceTrusted, this.fileService, this.uriIdentityService, this.logService, this.configurationCache);
 				this._register(folderConfiguration.onDidChange(() => this.onWorkspaceFolderConfigurationChanged(folder)));
 				this.cachedFolderConfigs.set(folder.uri, this._register(folderConfiguration));
 			}
@@ -944,8 +945,8 @@ class ConfigurationWorkspaceTrustContribution extends Disposable implements IWor
 		@IConfigurationService configurationService: WorkspaceService
 	) {
 		super();
-		configurationService.updateWorkspaceTrustState(workspaceTrustManagementService.getWorkspaceTrustState());
-		this._register(workspaceTrustManagementService.onDidChangeTrustState(e => configurationService.updateWorkspaceTrustState(workspaceTrustManagementService.getWorkspaceTrustState())));
+		configurationService.updateWorkspaceTrust(workspaceTrustManagementService.isWorkpaceTrusted());
+		this._register(workspaceTrustManagementService.onDidChangeTrust(e => configurationService.updateWorkspaceTrust(workspaceTrustManagementService.isWorkpaceTrusted())));
 	}
 }
 
@@ -953,24 +954,81 @@ class RegisterConfigurationSchemasContribution extends Disposable implements IWo
 	constructor(
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
 		@IWorkbenchEnvironmentService private readonly environmentService: IWorkbenchEnvironmentService,
+		@IWorkspaceTrustManagementService private readonly workspaceTrustManagementService: IWorkspaceTrustManagementService,
 	) {
 		super();
 		this.registerConfigurationSchemas();
 		const configurationRegistry = Registry.as<IConfigurationRegistry>(Extensions.Configuration);
 		this._register(configurationRegistry.onDidUpdateConfiguration(e => this.registerConfigurationSchemas()));
 		this._register(configurationRegistry.onDidSchemaChange(e => this.registerConfigurationSchemas()));
+		this._register(workspaceTrustManagementService.onDidChangeTrust(() => this.registerConfigurationSchemas()));
 	}
 
 	private registerConfigurationSchemas(): void {
 		const jsonRegistry = Registry.as<IJSONContributionRegistry>(JSONExtensions.JSONContribution);
-		const allSettingsSchema: IJSONSchema = { properties: allSettings.properties, patternProperties: allSettings.patternProperties, additionalProperties: true, allowTrailingCommas: true, allowComments: true };
-		const userSettingsSchema: IJSONSchema = this.environmentService.remoteAuthority ? { properties: { ...applicationSettings.properties, ...windowSettings.properties, ...resourceSettings.properties }, patternProperties: allSettings.patternProperties, additionalProperties: true, allowTrailingCommas: true, allowComments: true } : allSettingsSchema;
-		const machineSettingsSchema: IJSONSchema = { properties: { ...machineSettings.properties, ...machineOverridableSettings.properties, ...windowSettings.properties, ...resourceSettings.properties }, patternProperties: allSettings.patternProperties, additionalProperties: true, allowTrailingCommas: true, allowComments: true };
-		const workspaceSettingsSchema: IJSONSchema = { properties: { ...machineOverridableSettings.properties, ...windowSettings.properties, ...resourceSettings.properties }, patternProperties: allSettings.patternProperties, additionalProperties: true, allowTrailingCommas: true, allowComments: true };
+
+		const allSettingsSchema: IJSONSchema = {
+			properties: allSettings.properties,
+			patternProperties: allSettings.patternProperties,
+			additionalProperties: true,
+			allowTrailingCommas: true,
+			allowComments: true
+		};
+
+		const userSettingsSchema: IJSONSchema = this.environmentService.remoteAuthority ?
+			{
+				properties: {
+					...applicationSettings.properties,
+					...windowSettings.properties,
+					...resourceSettings.properties
+				},
+				patternProperties: allSettings.patternProperties,
+				additionalProperties: true,
+				allowTrailingCommas: true,
+				allowComments: true
+			}
+			: allSettingsSchema;
+
+		const machineSettingsSchema: IJSONSchema = {
+			properties: {
+				...machineSettings.properties,
+				...machineOverridableSettings.properties,
+				...windowSettings.properties,
+				...resourceSettings.properties
+			},
+			patternProperties: allSettings.patternProperties,
+			additionalProperties: true,
+			allowTrailingCommas: true,
+			allowComments: true
+		};
+
+		const workspaceSettingsSchema: IJSONSchema = {
+			properties: {
+				...this.checkAndFilterPropertiesRequiringTrust(machineOverridableSettings.properties),
+				...this.checkAndFilterPropertiesRequiringTrust(windowSettings.properties),
+				...this.checkAndFilterPropertiesRequiringTrust(resourceSettings.properties)
+			},
+			patternProperties: allSettings.patternProperties,
+			additionalProperties: true,
+			allowTrailingCommas: true,
+			allowComments: true
+		};
 
 		jsonRegistry.registerSchema(defaultSettingsSchemaId, {
-			properties: Object.keys(allSettings.properties).reduce<IJSONSchemaMap>((result, key) => { result[key] = { ...allSettings.properties[key], deprecationMessage: undefined }; return result; }, {}),
-			patternProperties: Object.keys(allSettings.patternProperties).reduce<IJSONSchemaMap>((result, key) => { result[key] = { ...allSettings.patternProperties[key], deprecationMessage: undefined }; return result; }, {}),
+			properties: Object.keys(allSettings.properties).reduce<IJSONSchemaMap>((result, key) => {
+				result[key] = {
+					...allSettings.properties[key],
+					deprecationMessage: undefined
+				};
+				return result;
+			}, {}),
+			patternProperties: Object.keys(allSettings.patternProperties).reduce<IJSONSchemaMap>((result, key) => {
+				result[key] = {
+					...allSettings.patternProperties[key],
+					deprecationMessage: undefined
+				};
+				return result;
+			}, {}),
 			additionalProperties: true,
 			allowTrailingCommas: true,
 			allowComments: true
@@ -979,13 +1037,36 @@ class RegisterConfigurationSchemasContribution extends Disposable implements IWo
 		jsonRegistry.registerSchema(machineSettingsSchemaId, machineSettingsSchema);
 
 		if (WorkbenchState.WORKSPACE === this.workspaceContextService.getWorkbenchState()) {
-			const folderSettingsSchema: IJSONSchema = { properties: { ...machineOverridableSettings.properties, ...resourceSettings.properties }, patternProperties: allSettings.patternProperties, additionalProperties: true, allowTrailingCommas: true, allowComments: true };
+			const folderSettingsSchema: IJSONSchema = {
+				properties: {
+					...this.checkAndFilterPropertiesRequiringTrust(machineOverridableSettings.properties),
+					...this.checkAndFilterPropertiesRequiringTrust(resourceSettings.properties)
+				},
+				patternProperties: allSettings.patternProperties,
+				additionalProperties: true,
+				allowTrailingCommas: true,
+				allowComments: true
+			};
 			jsonRegistry.registerSchema(workspaceSettingsSchemaId, workspaceSettingsSchema);
 			jsonRegistry.registerSchema(folderSettingsSchemaId, folderSettingsSchema);
 		} else {
 			jsonRegistry.registerSchema(workspaceSettingsSchemaId, workspaceSettingsSchema);
 			jsonRegistry.registerSchema(folderSettingsSchemaId, workspaceSettingsSchema);
 		}
+	}
+
+	private checkAndFilterPropertiesRequiringTrust(properties: IStringDictionary<IConfigurationPropertySchema>): IStringDictionary<IConfigurationPropertySchema> {
+		if (this.workspaceTrustManagementService.isWorkpaceTrusted()) {
+			return properties;
+		}
+
+		const result: IStringDictionary<IConfigurationPropertySchema> = {};
+		forEach(properties, ({ key, value }) => {
+			if (!value.requireTrust) {
+				result[key] = value;
+			}
+		});
+		return result;
 	}
 }
 
