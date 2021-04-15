@@ -7,7 +7,7 @@ import { localize } from 'vs/nls';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { IResourceEditorInput, ITextEditorOptions, IEditorOptions, EditorActivation, EditorOverride } from 'vs/platform/editor/common/editor';
 import { SideBySideEditor, IEditorInput, IEditorPane, GroupIdentifier, IFileEditorInput, IUntitledTextResourceEditorInput, IResourceDiffEditorInput, IEditorInputFactoryRegistry, Extensions as EditorExtensions, EditorInput, SideBySideEditorInput, IEditorInputWithOptions, isEditorInputWithOptions, EditorOptions, TextEditorOptions, IEditorIdentifier, IEditorCloseEvent, ITextEditorPane, ITextDiffEditorPane, IRevertOptions, SaveReason, EditorsOrder, isTextEditorPane, IWorkbenchEditorConfiguration, EditorResourceAccessor, IVisibleEditorPane } from 'vs/workbench/common/editor';
-import { DEFAULT_EDITOR_ASSOCIATION, EditorAssociation, EditorsAssociations, editorsAssociationsSettingId } from 'vs/workbench/browser/editor';
+import { DEFAULT_EDITOR_ASSOCIATION, EditorAssociation, EditorAssociations, editorsAssociationsSettingId } from 'vs/workbench/browser/editor';
 import { ResourceEditorInput } from 'vs/workbench/common/editor/resourceEditorInput';
 import { Registry } from 'vs/platform/registry/common/platform';
 import { ResourceMap } from 'vs/base/common/map';
@@ -91,7 +91,7 @@ export class EditorService extends Disposable implements EditorServiceImpl {
 	private registerListeners(): void {
 
 		// Editor & group changes
-		this.editorGroupService.whenCreated.then(() => this.onEditorGroupsCreated());
+		this.editorGroupService.whenReady.then(() => this.onEditorGroupsReady());
 		this.editorGroupService.onDidChangeActiveGroup(group => this.handleActiveEditorChange(group));
 		this.editorGroupService.onDidAddGroup(group => this.registerGroupListeners(group as IEditorGroupView));
 		this.editorsObserver.onDidMostRecentlyActiveEditorsChange(() => this._onDidMostRecentlyActiveEditorsChange.fire());
@@ -115,7 +115,7 @@ export class EditorService extends Disposable implements EditorServiceImpl {
 
 	private lastActiveEditor: IEditorInput | undefined = undefined;
 
-	private onEditorGroupsCreated(): void {
+	private onEditorGroupsReady(): void {
 
 		// Register listeners to each opened group
 		this.editorGroupService.groups.forEach(group => this.registerGroupListeners(group as IEditorGroupView));
@@ -755,7 +755,7 @@ export class EditorService extends Disposable implements EditorServiceImpl {
 				// Persist setting
 				if (resource && e.item && e.item.id) {
 					const newAssociation: EditorAssociation = { viewType: e.item.id, filenamePattern: `*${extname(resource)}` };
-					const currentAssociations = [...this.configurationService.getValue<EditorsAssociations>(editorsAssociationsSettingId)];
+					const currentAssociations = [...this.configurationService.getValue<EditorAssociations>(editorsAssociationsSettingId)];
 
 					// First try updating existing association
 					for (let i = 0; i < currentAssociations.length; ++i) {

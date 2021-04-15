@@ -108,16 +108,12 @@ export class ExtHostNotebookEditor {
 		this._viewColumn = viewColumn;
 	}
 
-	get editor(): vscode.NotebookEditor {
+	get apiEditor(): vscode.NotebookEditor {
 		if (!this._editor) {
 			const that = this;
 			this._editor = {
 				get document() {
 					return that.notebookData.notebookDocument;
-				},
-				get selection() {
-					const primarySelection = that._selections[0];
-					return primarySelection && that.notebookData.getCellFromIndex(primarySelection.start)?.cell;
 				},
 				get selections() {
 					return that._selections;
