@@ -7,7 +7,7 @@ import * as glob from 'vs/base/common/glob';
 import { URI } from 'vs/base/common/uri';
 import { basename } from 'vs/base/common/path';
 import { INotebookExclusiveDocumentFilter, isDocumentExcludePattern, TransientOptions } from 'vs/workbench/contrib/notebook/common/notebookCommon';
-import { ContributedEditorPriority } from 'vs/workbench/contrib/customEditor/common/extensionContributedEditorService';
+import { ContributedEditorPriority } from 'vs/workbench/services/editor/common/editorOverrideService';
 
 export type NotebookSelector = string | glob.IRelativePattern | INotebookExclusiveDocumentFilter;
 
@@ -61,7 +61,8 @@ export class NotebookProviderInfo {
 		this.dynamicContribution = descriptor.dynamicContribution;
 		this.exclusive = descriptor.exclusive;
 		this._options = {
-			transientMetadata: {},
+			transientCellMetadata: {},
+			transientDocumentMetadata: {},
 			transientOutputs: false
 		};
 	}
