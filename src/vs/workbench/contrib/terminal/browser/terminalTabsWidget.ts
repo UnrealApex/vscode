@@ -8,7 +8,7 @@ import { ITreeNode, ITreeRenderer } from 'vs/base/browser/ui/tree/tree';
 import { DefaultStyleController } from 'vs/base/browser/ui/list/listWidget';
 import { IAccessibilityService } from 'vs/platform/accessibility/common/accessibility';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
-import { IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
+import { IContextKey, IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
 import { IKeybindingService } from 'vs/platform/keybinding/common/keybinding';
 import { IThemeService, ThemeIcon } from 'vs/platform/theme/common/themeService';
 import { ITerminalInstance, ITerminalService } from 'vs/workbench/contrib/terminal/browser/terminal';
@@ -18,24 +18,26 @@ import { IInstantiationService } from 'vs/platform/instantiation/common/instanti
 import { ActionBar } from 'vs/base/browser/ui/actionbar/actionbar';
 import { MenuItemAction } from 'vs/platform/actions/common/actions';
 import { MenuEntryActionViewItem } from 'vs/platform/actions/browser/menuEntryActionViewItem';
-import { TERMINAL_COMMAND_ID, TERMINAL_DECORATIONS_SCHEME } from 'vs/workbench/contrib/terminal/common/terminal';
+import { KEYBINDING_CONTEXT_TERMINAL_TABS_SINGULAR_SELECTION, TERMINAL_COMMAND_ID } from 'vs/workbench/contrib/terminal/common/terminal';
 import { Codicon } from 'vs/base/common/codicons';
 import { Action } from 'vs/base/common/actions';
 import { MarkdownString } from 'vs/base/common/htmlContent';
 import { TerminalDecorationsProvider } from 'vs/workbench/contrib/terminal/browser/terminalDecorationsProvider';
-import { DEFAULT_LABELS_CONTAINER, IResourceLabel, IResourceLabelOptions, IResourceLabelProps, ResourceLabels } from 'vs/workbench/browser/labels';
+import { DEFAULT_LABELS_CONTAINER, IResourceLabel, ResourceLabels } from 'vs/workbench/browser/labels';
 import { IDecorationsService } from 'vs/workbench/services/decorations/browser/decorations';
-import { IHoverService } from 'vs/workbench/services/hover/browser/hover';
-import { URI } from 'vs/base/common/uri';
+import { IHoverAction, IHoverService } from 'vs/workbench/services/hover/browser/hover';
 import Severity from 'vs/base/common/severity';
+import { DisposableStore } from 'vs/base/common/lifecycle';
 
 const $ = DOM.$;
+const TAB_HEIGHT = 22;
 export const MIN_TABS_WIDGET_WIDTH = 46;
 export const DEFAULT_TABS_WIDGET_WIDTH = 80;
 export const MIDPOINT_WIDGET_WIDTH = (MIN_TABS_WIDGET_WIDTH + DEFAULT_TABS_WIDGET_WIDTH) / 2;
 
 export class TerminalTabsWidget extends WorkbenchObjectTree<ITerminalInstance>  {
 	private _decorationsProvider: TerminalDecorationsProvider | undefined;
+	private _terminalTabsSingleSelectedContextKey: IContextKey<boolean>;
 
 	constructor(
 		container: HTMLElement,
@@ -51,10 +53,10 @@ export class TerminalTabsWidget extends WorkbenchObjectTree<ITerminalInstance>  
 	) {
 		super('TerminalTabsTree', container,
 			{
-				getHeight: () => 22,
+				getHeight: () => TAB_HEIGHT,
 				getTemplateId: () => 'terminal.tabs'
 			},
-			[instantiationService.createInstance(TerminalTabsRenderer, container, instantiationService.createInstance(ResourceLabels, DEFAULT_LABELS_CONTAINER))],
+			[instantiationService.createInstance(TerminalTabsRenderer, container, instantiationService.createInstance(ResourceLabels, DEFAULT_LABELS_CONTAINER), () => this.getSelection())],
 			{
 				horizontalScrolling: false,
 				supportDynamicHeights: false,
@@ -68,9 +70,10 @@ export class TerminalTabsWidget extends WorkbenchObjectTree<ITerminalInstance>  
 				styleController: id => new DefaultStyleController(DOM.createStyleSheet(container), id),
 				filter: undefined,
 				smoothScrolling: configurationService.getValue<boolean>('workbench.list.smoothScrolling'),
-				multipleSelectionSupport: false,
+				multipleSelectionSupport: true,
 				expandOnlyOnTwistieClick: true,
-				selectionNavigation: true
+				selectionNavigation: true,
+				additionalScrollHeight: TAB_HEIGHT
 			},
 			contextKeyService,
 			listService,
@@ -79,7 +82,6 @@ export class TerminalTabsWidget extends WorkbenchObjectTree<ITerminalInstance>  
 			keybindingService,
 			accessibilityService,
 		);
-
 		this._terminalService.onInstancesChanged(() => this._render());
 		this._terminalService.onInstanceTitleChanged(() => this._render());
 		this._terminalService.onActiveInstanceChanged(e => {
@@ -88,6 +90,47 @@ export class TerminalTabsWidget extends WorkbenchObjectTree<ITerminalInstance>  
 				this.reveal(e);
 			}
 		});
+
+		this.onMouseDblClick(async () => {
+			if (this.getFocus().length === 0) {
+				const instance = this._terminalService.createTerminal();
+				this._terminalService.setActiveInstance(instance);
+				await instance.focusWhenReady();
+			}
+		});
+
+		this.onMouseClick(e => {
+			// If focus mode is single click focus the element unless a multi-select in happening
+			const focusMode = configurationService.getValue<'singleClick' | 'doubleClick'>('terminal.integrated.tabs.focusMode');
+			if (focusMode === 'singleClick') {
+				if (this.getSelection().length <= 1) {
+					e.element?.focus(true);
+				}
+			}
+		});
+
+		// Set the selection to whatever is right clicked if it is not inside the selection
+		this.onContextMenu(e => {
+			if (!e.element) {
+				this.setSelection([null]);
+				return;
+			}
+			const selection = this.getSelection();
+			if (!selection || !selection.find(s => e.element === s)) {
+				this.setSelection([e.element]);
+			}
+		});
+
+		this._terminalTabsSingleSelectedContextKey = KEYBINDING_CONTEXT_TERMINAL_TABS_SINGULAR_SELECTION.bindTo(contextKeyService);
+
+		this.onDidChangeSelection(e => {
+			this._terminalTabsSingleSelectedContextKey.set(e.elements.length === 1);
+		});
+
+		this.onDidChangeFocus(e => {
+			this._terminalTabsSingleSelectedContextKey.set(e.elements.length === 1);
+		});
+
 		this.onDidOpen(async e => {
 			const instance = e.element;
 			if (!instance) {
@@ -103,6 +146,7 @@ export class TerminalTabsWidget extends WorkbenchObjectTree<ITerminalInstance>  
 			_decorationsService.registerDecorationsProvider(this._decorationsProvider);
 		}
 		this._terminalService.onInstancePrimaryStatusChanged(() => this._render());
+		this._render();
 	}
 
 	private _render(): void {
@@ -122,10 +166,12 @@ class TerminalTabsRenderer implements ITreeRenderer<ITerminalInstance, never, IT
 	constructor(
 		private readonly _container: HTMLElement,
 		private readonly _labels: ResourceLabels,
+		private readonly _getSelection: () => (ITerminalInstance | null)[],
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 		@ITerminalService private readonly _terminalService: ITerminalService,
 		@IHoverService private readonly _hoverService: IHoverService,
-		@IConfigurationService private readonly _configurationService: IConfigurationService
+		@IConfigurationService private readonly _configurationService: IConfigurationService,
+		@IKeybindingService private readonly _keybindingService: IKeybindingService
 	) {
 	}
 
@@ -133,14 +179,20 @@ class TerminalTabsRenderer implements ITreeRenderer<ITerminalInstance, never, IT
 		(container.parentElement!.parentElement!.querySelector('.monaco-tl-twistie')! as HTMLElement).classList.add('force-no-twistie');
 
 		const element = DOM.append(container, $('.terminal-tabs-entry'));
-
+		const context: { hoverActions?: IHoverAction[] } = {};
 		const label = this._labels.create(element, {
 			supportHighlights: true,
 			supportDescriptionHighlights: true,
 			supportIcons: true,
 			hoverDelegate: {
 				delay: this._configurationService.getValue<number>('workbench.hover.delay'),
-				showHover: e => this._hoverService.showHover(e)
+				showHover: options => {
+					return this._hoverService.showHover({
+						...options,
+						actions: context.hoverActions,
+						hideOnHover: true
+					});
+				}
 			}
 		});
 
@@ -153,16 +205,19 @@ class TerminalTabsRenderer implements ITreeRenderer<ITerminalInstance, never, IT
 					: undefined
 		});
 
-		return { element, label, actionBar };
+		return {
+			element,
+			label,
+			actionBar,
+			context
+		};
 	}
 
 	shouldHideText(): boolean {
 		return this._container ? this._container.clientWidth < MIDPOINT_WIDGET_WIDTH : false;
 	}
 
-
 	renderElement(node: ITreeNode<ITerminalInstance>, index: number, template: ITerminalTabEntryTemplate): void {
-
 		let instance = node.element;
 
 		const tab = this._terminalService.getTabForInstance(instance);
@@ -187,9 +242,12 @@ class TerminalTabsRenderer implements ITreeRenderer<ITerminalInstance, never, IT
 
 		let title = instance.title;
 		const statuses = instance.statusList.statuses;
-		if (statuses.length) {
-			title += `\n\n---\n\nStatuses:`;
-			title += statuses.map(e => `\n- ${e.id}`);
+		template.context.hoverActions = [];
+		for (const status of statuses) {
+			title += `\n\n---\n\n${status.tooltip || status.id}`;
+			if (status.hoverActions) {
+				template.context.hoverActions.push(...status.hoverActions);
+			}
 		}
 
 		let label: string;
@@ -197,43 +255,82 @@ class TerminalTabsRenderer implements ITreeRenderer<ITerminalInstance, never, IT
 			template.actionBar.clear();
 			const primaryStatus = instance.statusList.primary;
 			if (primaryStatus && primaryStatus.severity >= Severity.Warning) {
-				label = `${prefix}$(${primaryStatus.icon?.id || instance.icon.id})`;
+				label = `${prefix}$(${primaryStatus.icon?.id || instance.icon?.id})`;
 			} else {
-				label = `${prefix}$(${instance.icon.id})`;
+				label = `${prefix}$(${instance.icon?.id})`;
 			}
 		} else {
 			this.fillActionBar(instance, template);
-			// Remove "Task - " from only tabs to give more horizontal space as it's obvious from
-			// the tab icon
-			label = `${prefix}$(${instance.icon.id}) ${instance.title.replace(/^Task - /, '')}`;
+			label = `${prefix}$(${instance.icon?.id})`;
+			// Only add the title if the icon is set, this prevents the title jumping around for
+			// example when launching with a ShellLaunchConfig.name and no icon
+			if (instance.icon) {
+				label += ` ${instance.title}`;
+			}
 		}
 
-		template.label.setLabel(label, undefined, {
+		if (!template.elementDispoables) {
+			template.elementDispoables = new DisposableStore();
+		}
+
+		// Kill terminal on middle click
+		template.elementDispoables.add(DOM.addDisposableListener(template.element, DOM.EventType.AUXCLICK, e => {
+			if (e.button === 1/*middle*/) {
+				instance.dispose();
+			}
+		}));
+		template.label.setResource({
+			resource: instance.resource,
+			name: label,
+			description: hasText ? instance.shellLaunchConfig.description : undefined
+		}, {
+			fileDecorations: {
+				colors: true,
+				badges: hasText
+			},
 			title: {
 				markdown: new MarkdownString(title),
 				markdownNotSupportedFallback: undefined
 			}
 		});
+	}
 
-		if (instance.statusList.statuses.length && hasText) {
-			const labelProps: IResourceLabelProps = { resource: URI.from({ scheme: TERMINAL_DECORATIONS_SCHEME, path: instance.instanceId.toString() }), name: label };
-			const options: IResourceLabelOptions = { fileDecorations: { colors: true, badges: true } };
-			template.label.setResource(labelProps, options);
-		}
+	disposeElement(element: ITreeNode<ITerminalInstance, any>, index: number, templateData: ITerminalTabEntryTemplate): void {
+		templateData.elementDispoables?.dispose();
+		templateData.elementDispoables = undefined;
 	}
 
 	disposeTemplate(templateData: ITerminalTabEntryTemplate): void {
 	}
 
 	fillActionBar(instance: ITerminalInstance, template: ITerminalTabEntryTemplate): void {
-		const configure = new Action(TERMINAL_COMMAND_ID.CONFIGURE_ACTIVE, localize('terminal.configure', "Configure"), ThemeIcon.asClassName(Codicon.pencil), true, () => instance.configure());
-		const split = new Action(TERMINAL_COMMAND_ID.SPLIT, localize('terminal.split', "Split"), ThemeIcon.asClassName(Codicon.splitHorizontal), true, async () => this._terminalService.splitInstance(instance));
-		const kill = new Action(TERMINAL_COMMAND_ID.KILL, localize('terminal.kill', "Kill"), ThemeIcon.asClassName(Codicon.trashcan), true, async () => instance.dispose(true));
+		// If the instance is within the selection, split all selected
+		const actions = [
+			new Action(TERMINAL_COMMAND_ID.SPLIT_INSTANCE, localize('terminal.split', "Split"), ThemeIcon.asClassName(Codicon.splitHorizontal), true, async () => {
+				this._runForSelectionOrInstance(instance, e => this._terminalService.splitInstance(e));
+			}),
+			new Action(TERMINAL_COMMAND_ID.KILL_INSTANCE, localize('terminal.kill', "Kill"), ThemeIcon.asClassName(Codicon.trashcan), true, async () => {
+				this._runForSelectionOrInstance(instance, e => e.dispose());
+			})
+		];
 		// TODO: Cache these in a way that will use the correct instance
 		template.actionBar.clear();
-		template.actionBar.push(configure, { icon: true, label: false });
-		template.actionBar.push(split, { icon: true, label: false });
-		template.actionBar.push(kill, { icon: true, label: false });
+		for (const action of actions) {
+			template.actionBar.push(action, { icon: true, label: false, keybinding: this._keybindingService.lookupKeybinding(action.id)?.getLabel() });
+		}
+	}
+
+	private _runForSelectionOrInstance(instance: ITerminalInstance, callback: (instance: ITerminalInstance) => void) {
+		const selection = this._getSelection();
+		if (selection.includes(instance)) {
+			for (const s of selection) {
+				if (s) {
+					callback(s);
+				}
+			}
+		} else {
+			callback(instance);
+		}
 	}
 }
 
@@ -241,4 +338,8 @@ interface ITerminalTabEntryTemplate {
 	element: HTMLElement;
 	label: IResourceLabel;
 	actionBar: ActionBar;
+	context: {
+		hoverActions?: IHoverAction[];
+	};
+	elementDispoables?: DisposableStore;
 }

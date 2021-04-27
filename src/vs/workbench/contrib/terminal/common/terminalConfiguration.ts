@@ -100,7 +100,8 @@ export const terminalConfiguration: IConfigurationNode = {
 			items: {
 				type: 'string'
 			},
-			default: []
+			default: [],
+			markdownDeprecationMessage: 'This is deprecated, use `#terminal.integrated.defaultProfile.linux#` instead'
 		},
 		'terminal.integrated.shellArgs.osx': {
 			requireTrust: true,
@@ -114,7 +115,8 @@ export const terminalConfiguration: IConfigurationNode = {
 			// Unlike on Linux, ~/.profile is not sourced when logging into a macOS session. This
 			// is the reason terminals on macOS typically run login shells by default which set up
 			// the environment. See http://unix.stackexchange.com/a/119675/115410
-			default: ['-l']
+			default: ['-l'],
+			markdownDeprecationMessage: 'This is deprecated, use `#terminal.integrated.defaultProfile.osx#` instead'
 		},
 		'terminal.integrated.shellArgs.windows': {
 			requireTrust: true,
@@ -134,7 +136,8 @@ export const terminalConfiguration: IConfigurationNode = {
 					markdownDescription: localize('terminal.integrated.shellArgs.windows.string', "The command line arguments in [command-line format](https://msdn.microsoft.com/en-au/08dfcab2-eb6e-49a4-80eb-87d4076c98c6) to use when on the Windows terminal. [Read more about configuring the shell](https://code.visualstudio.com/docs/editor/integrated-terminal#_configuration).")
 				}
 			],
-			default: []
+			default: [],
+			markdownDeprecationMessage: 'This is deprecated, use `#terminal.integrated.defaultProfile.windows#` instead'
 		},
 		'terminal.integrated.profiles.windows': {
 			requireTrust: true,
@@ -212,7 +215,8 @@ export const terminalConfiguration: IConfigurationNode = {
 			type: 'object',
 			default: {
 				'bash': {
-					path: 'bash'
+					path: 'bash',
+					icon: 'terminal-bash'
 				},
 				'zsh': {
 					path: 'zsh'
@@ -297,16 +301,33 @@ export const terminalConfiguration: IConfigurationNode = {
 			type: 'boolean',
 			default: true
 		},
-		'terminal.integrated.showTabs': {
-			description: localize('terminal.integrated.showTabs', 'Controls whether terminal tabs display as a list to the side of the terminal. When this is disabled a dropdown will display instead.'),
+		'terminal.integrated.tabs.enabled': {
+			description: localize('terminal.integrated.tabs.enabled', 'Controls whether terminal tabs display as a list to the side of the terminal. When this is disabled a dropdown will display instead.'),
+			type: 'boolean',
+			default: true,
+		},
+		'terminal.integrated.tabs.hideForSingle': {
+			description: localize('terminal.integrated.tabs.hideForSingle', 'Hides the terminal tabs view when there is only a single terminal instance.'),
 			type: 'boolean',
 			default: true
 		},
-		'terminal.integrated.tabsLocation': {
-			'type': 'string',
-			'enum': ['left', 'right'],
-			'default': 'right',
-			'description': localize('terminal.integrated.tabsLocation', "Controls the location of the terminal tabs, either to the left or right of the actual terminal(s).")
+		'terminal.integrated.tabs.showActiveTerminal': {
+			description: localize('terminal.integrated.tabs.showActiveTerminal', 'Shows the active terminal information in the view, this is particularly useful when the title within the tabs aren\'t visible.'),
+			type: 'string',
+			enum: ['always', 'singleTerminal', 'singleTerminalOrNarrow', 'never'],
+			default: 'singleTerminalOrNarrow',
+		},
+		'terminal.integrated.tabs.location': {
+			type: 'string',
+			enum: ['left', 'right'],
+			default: 'right',
+			description: localize('terminal.integrated.tabs.location', "Controls the location of the terminal tabs, either to the left or right of the actual terminal(s).")
+		},
+		'terminal.integrated.tabs.focusMode': {
+			type: 'string',
+			enum: ['singleClick', 'doubleClick'],
+			default: 'doubleClick',
+			description: localize('terminal.integrated.tabs.focusMode', "Controls whether focusing the terminal of a tab happens on double or single click.")
 		},
 		'terminal.integrated.macOptionIsMeta': {
 			description: localize('terminal.integrated.macOptionIsMeta', "Controls whether to treat the option key as the meta key in the terminal on macOS."),
@@ -372,6 +393,11 @@ export const terminalConfiguration: IConfigurationNode = {
 			markdownDescription: localize('terminal.integrated.mouseWheelScrollSensitivity', "A multiplier to be used on the `deltaY` of mouse wheel scroll events."),
 			type: 'number',
 			default: 1
+		},
+		'terminal.integrated.bellDuration': {
+			markdownDescription: localize('terminal.integrated.bellDuration', "The number of milliseconds to show the bell within a terminal tab when triggered."),
+			type: 'number',
+			default: 1000
 		},
 		'terminal.integrated.fontWeight': {
 			'anyOf': [
@@ -476,7 +502,7 @@ export const terminalConfiguration: IConfigurationNode = {
 			default: false
 		},
 		'terminal.integrated.enableBell': {
-			description: localize('terminal.integrated.enableBell', "Controls whether the terminal bell is enabled."),
+			description: localize('terminal.integrated.enableBell', "Controls whether the terminal bell is enabled, this shows up as a visual bell next to the terminal's name."),
 			type: 'boolean',
 			default: false
 		},
@@ -655,7 +681,8 @@ function getTerminalShellConfigurationStub(linux: string, osx: string, windows: 
 				scope: ConfigurationScope.APPLICATION,
 				markdownDescription: linux,
 				type: ['string', 'null'],
-				default: null
+				default: null,
+				markdownDeprecationMessage: 'This is deprecated, use `#terminal.integrated.defaultProfile.linux#` instead'
 			},
 			'terminal.integrated.shell.osx': {
 				requireTrust: true,
@@ -663,7 +690,8 @@ function getTerminalShellConfigurationStub(linux: string, osx: string, windows: 
 				scope: ConfigurationScope.APPLICATION,
 				markdownDescription: osx,
 				type: ['string', 'null'],
-				default: null
+				default: null,
+				markdownDeprecationMessage: 'This is deprecated, use `#terminal.integrated.defaultProfile.osx#` instead'
 			},
 			'terminal.integrated.shell.windows': {
 				requireTrust: true,
@@ -671,7 +699,8 @@ function getTerminalShellConfigurationStub(linux: string, osx: string, windows: 
 				scope: ConfigurationScope.APPLICATION,
 				markdownDescription: windows,
 				type: ['string', 'null'],
-				default: null
+				default: null,
+				markdownDeprecationMessage: 'This is deprecated, use `#terminal.integrated.defaultProfile.windows#` instead'
 			}
 		}
 	};

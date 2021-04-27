@@ -17,7 +17,7 @@ export function workspaceTrustToString(trustState: boolean) {
 	if (trustState) {
 		return localize('trusted', "Trusted");
 	} else {
-		return localize('untrusted', "Untrusted");
+		return localize('untrusted', "Restricted Mode");
 	}
 }
 
@@ -62,7 +62,7 @@ export interface IWorkspaceTrustRequestService {
 
 	cancelRequest(): void;
 	completeRequest(trusted?: boolean): void;
-	requestWorkspaceTrust(options?: WorkspaceTrustRequestOptions): Promise<boolean>;
+	requestWorkspaceTrust(options?: WorkspaceTrustRequestOptions): Promise<boolean | undefined>;
 }
 
 export interface IWorkspaceTrustUriInfo {

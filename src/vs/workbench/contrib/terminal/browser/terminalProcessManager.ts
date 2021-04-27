@@ -22,7 +22,6 @@ import { Disposable, dispose, IDisposable, toDisposable } from 'vs/base/common/l
 import { withNullAsUndefined } from 'vs/base/common/types';
 import { EnvironmentVariableInfoChangesActive, EnvironmentVariableInfoStale } from 'vs/workbench/contrib/terminal/browser/environmentVariableInfo';
 import { IPathService } from 'vs/workbench/services/path/common/pathService';
-import { URI } from 'vs/base/common/uri';
 import { IEnvironmentVariableInfo, IEnvironmentVariableService, IMergedEnvironmentVariableCollection } from 'vs/workbench/contrib/terminal/common/environmentVariable';
 import { IProcessDataEvent, IShellLaunchConfig, ITerminalChildProcess, ITerminalDimensionsOverride, ITerminalEnvironment, ITerminalLaunchError, FlowControlConstants, TerminalShellType, ILocalTerminalService, IOffProcessTerminalService, ITerminalDimensions } from 'vs/platform/terminal/common/terminal';
 import { TerminalRecorder } from 'vs/platform/terminal/common/terminalRecorder';
@@ -201,6 +200,11 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 			}
 			const hasRemoteAuthority = !!this.remoteAuthority;
 
+			// Create variable resolver
+			const activeWorkspaceRootUri = this._historyService.getLastActiveWorkspaceRoot();
+			const lastActiveWorkspace = activeWorkspaceRootUri ? withNullAsUndefined(this._workspaceContextService.getWorkspaceFolder(activeWorkspaceRootUri)) : undefined;
+			const variableResolver = terminalEnvironment.createVariableResolver(lastActiveWorkspace, await this._terminalProfileResolverService.getShellEnvironment(this.remoteAuthority), this._configurationResolverService);
+
 			// resolvedUserHome is needed here as remote resolvers can launch local terminals before
 			// they're connected to the remote.
 			this.userHome = this._pathService.resolvedUserHome?.fsPath;
@@ -215,10 +219,8 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 				this.userHome = remoteEnv.userHome.path;
 				this.os = remoteEnv.os;
 
-				const activeWorkspaceRootUri = this._historyService.getLastActiveWorkspaceRoot();
-
 				// this is a copy of what the merged environment collection is on the remote side
-				await this._setupEnvVariableInfo(activeWorkspaceRootUri, shellLaunchConfig);
+				await this._setupEnvVariableInfo(variableResolver, shellLaunchConfig);
 
 				const shouldPersist = !shellLaunchConfig.isFeatureTerminal && this._configHelper.config.enablePersistentSessions;
 				if (shellLaunchConfig.attachPersistentProcess) {
@@ -253,7 +255,7 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 						return undefined;
 					}
 				} else {
-					newProcess = await this._launchLocalProcess(this._localTerminalService, shellLaunchConfig, cols, rows, this.userHome, isScreenReaderModeEnabled);
+					newProcess = await this._launchLocalProcess(this._localTerminalService, shellLaunchConfig, cols, rows, this.userHome, isScreenReaderModeEnabled, variableResolver);
 				}
 				if (!this._isDisposed) {
 					this._setupPtyHostListeners(this._localTerminalService);
@@ -332,15 +334,13 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 	}
 
 	// Fetch any extension environment additions and apply them
-	private async _setupEnvVariableInfo(activeWorkspaceRootUri: URI | undefined, shellLaunchConfig: IShellLaunchConfig): Promise<IProcessEnvironment> {
+	private async _setupEnvVariableInfo(variableResolver: terminalEnvironment.VariableResolver | undefined, shellLaunchConfig: IShellLaunchConfig): Promise<IProcessEnvironment> {
 		const platformKey = isWindows ? 'windows' : (isMacintosh ? 'osx' : 'linux');
-		const lastActiveWorkspace = activeWorkspaceRootUri ? withNullAsUndefined(this._workspaceContextService.getWorkspaceFolder(activeWorkspaceRootUri)) : undefined;
 		const envFromConfigValue = this._configurationService.getValue<ITerminalEnvironment | undefined>(`terminal.integrated.env.${platformKey}`);
 		this._configHelper.showRecommendations(shellLaunchConfig);
 		const baseEnv = await (this._configHelper.config.inheritEnv
 			? this._terminalProfileResolverService.getShellEnvironment(this.remoteAuthority)
 			: this._terminalInstanceService.getMainProcessParentEnv());
-		const variableResolver = terminalEnvironment.createVariableResolver(lastActiveWorkspace, this._configurationResolverService);
 		const env = terminalEnvironment.createTerminalEnvironment(shellLaunchConfig, envFromConfigValue, variableResolver, this._productService.version, this._configHelper.config.detectLocale, baseEnv);
 
 		if (!shellLaunchConfig.strictEnv && !shellLaunchConfig.hideFromUser) {
@@ -367,7 +367,8 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 		cols: number,
 		rows: number,
 		userHome: string | undefined,
-		isScreenReaderModeEnabled: boolean
+		isScreenReaderModeEnabled: boolean,
+		variableResolver: terminalEnvironment.VariableResolver | undefined
 	): Promise<ITerminalChildProcess> {
 		await this._terminalProfileResolverService.resolveShellLaunchConfig(shellLaunchConfig, {
 			remoteAuthority: undefined,
@@ -375,18 +376,17 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 		});
 
 		const activeWorkspaceRootUri = this._historyService.getLastActiveWorkspaceRoot(Schemas.file);
-		const lastActiveWorkspace = activeWorkspaceRootUri ? withNullAsUndefined(this._workspaceContextService.getWorkspaceFolder(activeWorkspaceRootUri)) : undefined;
 
 		const initialCwd = terminalEnvironment.getCwd(
 			shellLaunchConfig,
 			userHome,
-			terminalEnvironment.createVariableResolver(lastActiveWorkspace, this._configurationResolverService),
+			variableResolver,
 			activeWorkspaceRootUri,
 			this._configHelper.config.cwd,
 			this._logService
 		);
 
-		const env = await this._setupEnvVariableInfo(activeWorkspaceRootUri, shellLaunchConfig);
+		const env = await this._setupEnvVariableInfo(variableResolver, shellLaunchConfig);
 
 		const useConpty = this._configHelper.config.windowsEnableConpty && !isScreenReaderModeEnabled;
 		const shouldPersist = this._configHelper.config.enablePersistentSessions && !shellLaunchConfig.isFeatureTerminal;
@@ -429,7 +429,7 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 					// that it knows that the process is not still active. Note that this is not
 					// done for regular terminals because otherwise the terminal instance would be
 					// disposed.
-					this._onExit(undefined);
+					this._onExit(-1);
 				} else {
 					// For normal terminals write a message indicating what happened and relaunch
 					// using the previous shellLaunchConfig
@@ -472,7 +472,7 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 
 	public async write(data: string): Promise<void> {
 		await this.ptyProcessReady;
-		this._dataFilter.triggerSwap();
+		this._dataFilter.disableSeamlessRelaunch();
 		this._hasWrittenData = true;
 		if (this.shellProcessId || this._processType === ProcessType.PsuedoTerminal) {
 			if (this._process) {
@@ -487,7 +487,7 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 
 	public async processBinary(data: string): Promise<void> {
 		await this.ptyProcessReady;
-		this._dataFilter.triggerSwap();
+		this._dataFilter.disableSeamlessRelaunch();
 		this._hasWrittenData = true;
 		this._process?.processBinary(data);
 	}
@@ -589,8 +589,8 @@ class SeamlessRelaunchDataFilter extends Disposable {
 	private _secondDisposable?: IDisposable;
 	private _dataListener?: IDisposable;
 	private _activeProcess?: ITerminalChildProcess;
+	private _disableSeamlessRelaunch: boolean = false;
 
-	private _recordingTimeout?: number;
 	private _swapTimeout?: number;
 
 	private readonly _onProcessData = this._register(new Emitter<string | IProcessDataEvent>());
@@ -609,16 +609,18 @@ class SeamlessRelaunchDataFilter extends Disposable {
 
 		this._activeProcess = process;
 
-		// If the process is new, relaunch has timed out or the terminal should not reset, start
-		// listening and firing data events immediately
-		if (!this._firstRecorder || !reset) {
+		// Start firing events immediately if:
+		// - there's no recorder, which means it's a new terminal
+		// - this is not a reset, so seamless relaunch isn't necessary
+		// - seamless relaunch is disabled because the terminal has accepted input
+		if (!this._firstRecorder || !reset || this._disableSeamlessRelaunch) {
 			this._firstDisposable?.dispose();
 			[this._firstRecorder, this._firstDisposable] = this._createRecorder(process);
-			this._dataListener = process.onProcessData(e => this._onProcessData.fire(e));
-			if (this._recordingTimeout) {
-				window.clearTimeout(this._recordingTimeout);
+			if (this._disableSeamlessRelaunch && reset) {
+				this._onProcessData.fire('\x1bc');
 			}
-			this._recordingTimeout = window.setTimeout(() => this._stopRecording(), SeamlessRelaunchConstants.RecordTerminalDuration);
+			this._dataListener = process.onProcessData(e => this._onProcessData.fire(e));
+			this._disableSeamlessRelaunch = false;
 			return;
 		}
 
@@ -638,6 +640,15 @@ class SeamlessRelaunchDataFilter extends Disposable {
 	}
 
 	/**
+	 * Disables seamless relaunch for the active process
+	 */
+	disableSeamlessRelaunch() {
+		this._disableSeamlessRelaunch = true;
+		this._stopRecording();
+		this.triggerSwap();
+	}
+
+	/**
 	 * Trigger the swap of the processes if needed (eg. timeout, input)
 	 */
 	triggerSwap() {
@@ -651,7 +662,6 @@ class SeamlessRelaunchDataFilter extends Disposable {
 		if (!this._firstRecorder) {
 			return;
 		}
-
 		// Clear the first recorder if no second process was attached before the swap trigger
 		if (!this._secondRecorder) {
 			this._firstRecorder = undefined;
@@ -681,10 +691,6 @@ class SeamlessRelaunchDataFilter extends Disposable {
 		this._firstDisposable?.dispose();
 		this._firstDisposable = this._secondDisposable;
 		this._secondRecorder = undefined;
-		if (this._recordingTimeout) {
-			window.clearTimeout(this._recordingTimeout);
-		}
-		this._recordingTimeout = window.setTimeout(() => this._stopRecording(), SeamlessRelaunchConstants.RecordTerminalDuration);
 	}
 
 	private _stopRecording() {
@@ -692,13 +698,6 @@ class SeamlessRelaunchDataFilter extends Disposable {
 		if (this._swapTimeout) {
 			return;
 		}
-
-		// Clear the timeout
-		if (this._recordingTimeout) {
-			window.clearTimeout(this._recordingTimeout);
-			this._recordingTimeout = undefined;
-		}
-
 		// Stop recording
 		this._firstRecorder = undefined;
 		this._firstDisposable?.dispose();

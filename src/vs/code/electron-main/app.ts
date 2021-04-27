@@ -916,6 +916,8 @@ export class CodeApplication extends Disposable {
 
 				if (hasWorkspaceFileExtension(path)) {
 					return { workspaceUri: remoteUri };
+				} else if (/:[\d]+$/.test(path)) { // path with :line:column syntax
+					return { fileUri: remoteUri };
 				} else {
 					return { folderUri: remoteUri };
 				}
@@ -948,6 +950,8 @@ export class CodeApplication extends Disposable {
 		this.lifecycleMainService.phase = LifecycleMainPhase.AfterWindowOpen;
 
 		// Observe shared process for errors
+		let willShutdown = false;
+		once(this.lifecycleMainService.onWillShutdown)(() => willShutdown = true);
 		const telemetryService = accessor.get(ITelemetryService);
 		this._register(sharedProcess.onDidError(({ type, details }) => {
 
@@ -965,16 +969,19 @@ export class CodeApplication extends Disposable {
 				type: { classification: 'SystemMetaData', purpose: 'PerformanceAndHealth', isMeasurement: true };
 				reason: { classification: 'SystemMetaData', purpose: 'PerformanceAndHealth', isMeasurement: true };
 				visible: { classification: 'SystemMetaData', purpose: 'PerformanceAndHealth', isMeasurement: true };
+				shuttingdown: { classification: 'SystemMetaData', purpose: 'PerformanceAndHealth', isMeasurement: true };
 			};
 			type SharedProcessErrorEvent = {
 				type: WindowError;
 				reason: string | undefined;
 				visible: boolean;
+				shuttingdown: boolean;
 			};
 			telemetryService.publicLog2<SharedProcessErrorEvent, SharedProcessErrorClassification>('sharedprocesserror', {
 				type,
 				reason: typeof details !== 'string' ? details?.reason : undefined,
-				visible: sharedProcess.isVisible()
+				visible: sharedProcess.isVisible(),
+				shuttingdown: willShutdown
 			});
 		}));
 
