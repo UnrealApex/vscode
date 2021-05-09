@@ -545,7 +545,7 @@ export namespace WorkspaceEdit {
 						resource: entry.uri,
 						edit: entry.edit,
 						notebookMetadata: entry.notebookMetadata,
-						notebookVersionId: extHostNotebooks?.lookupNotebookDocument(entry.uri)?.apiNotebook.version
+						notebookVersionId: extHostNotebooks?.getNotebookDocument(entry.uri, true)?.apiNotebook.version
 					});
 
 				} else if (entry._type === types.FileEditType.CellOutput) {
@@ -580,7 +580,7 @@ export namespace WorkspaceEdit {
 						_type: extHostProtocol.WorkspaceEditType.Cell,
 						metadata: entry.metadata,
 						resource: entry.uri,
-						notebookVersionId: extHostNotebooks?.lookupNotebookDocument(entry.uri)?.apiNotebook.version,
+						notebookVersionId: extHostNotebooks?.getNotebookDocument(entry.uri, true)?.apiNotebook.version,
 						edit: {
 							editType: notebooks.CellEditType.Replace,
 							index: entry.index,
@@ -1660,16 +1660,14 @@ export namespace NotebookKernelPreload {
 	export function from(preload: vscode.NotebookKernelPreload): { uri: UriComponents; provides: string[] } {
 		return {
 			uri: preload.uri,
+			// todo@connor4312: the conditional here can be removed after a migration period
 			provides: typeof preload.provides === 'string'
 				? [preload.provides]
 				: preload.provides ?? []
 		};
 	}
 	export function to(preload: { uri: UriComponents; provides: string[] }): vscode.NotebookKernelPreload {
-		return {
-			uri: URI.revive(preload.uri),
-			provides: preload.provides
-		};
+		return new types.NotebookKernelPreload(URI.revive(preload.uri), preload.provides);
 	}
 }
 
